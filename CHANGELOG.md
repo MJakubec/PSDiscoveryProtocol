@@ -1,0 +1,11 @@
+# Unreleased
+
+- Preserve the public commands, aliases, packet class and supported output properties while separating public commands from private binary readers and TLV decoders.
+- Reject malformed or truncated frames with an `InvalidDataException` containing the protocol, TLV offset and reason. Parsers emit no partial results. LLDP requires an empty EndOfLLDPDU terminator and ignores subsequent padding; CDP honors the Ethernet payload length.
+- Preserve the first repeated scalar value and log duplicates with `-Verbose`. Aggregate repeated address values. Decode CDP address protocol identifiers using their declared lengths.
+- Decode IEEE and CEE DCBX independently of their order, including all eight priority assignments.
+- Clean up owned capture sessions, ETL files and remote connections after failures. Continue to later computers after a per-computer error, missing adapters or missing packets. `-ErrorAction Stop` still stops processing after cleanup.
+- Resolve capture aliases before selecting the default duration. Require a duration of 1–32767 seconds; return the first matching frame per interface.
+- Write PCAP timestamps in microseconds, use the actual captured byte count for included length, and retain FragmentSize as original length. Reject an original length smaller than the captured data.
+
+VLAN-tagged Ethernet frames, additional TLV types and checksum validation remain outside the supported scope.
