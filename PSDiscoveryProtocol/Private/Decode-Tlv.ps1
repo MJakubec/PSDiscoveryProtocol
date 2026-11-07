@@ -81,15 +81,51 @@ function Convert-LldpOrganization {
     param([byte[]]$Value, [hashtable]$Properties)
     $MedOui = '00-12-BB'
     $IeeeOui = '00-80-C2'
+    $Dot3Oui = '00-12-0F'
     $CeeOui = '00-1B-21'
     $Header = Read-PacketBytes $Value 0 4 'LLDP'
     $Oui = [BitConverter]::ToString($Header, 0, 3)
     $Subtype = $Header[3]
     $Payload = Read-PacketBytes $Value 4 ($Value.Length - 4) 'LLDP'
-    if ($Oui -eq $MedOui -and $Subtype -eq 10) { Add-PacketProperty $Properties 'Model' ([Text.Encoding]::ASCII.GetString($Payload)) }
+    if ($Oui -eq $MedOui) {
+        $InventoryTypes = @{
+            5 = 'HardwareRevision'; 6 = 'FirmwareRevision'; 7 = 'SoftwareVersion'
+            8 = 'SerialNumber'; 9 = 'Manufacturer'; 10 = 'Model'; 11 = 'AssetId'
+        }
+        if ($InventoryTypes.ContainsKey([int]$Subtype)) {
+            Add-PacketProperty $Properties $InventoryTypes[[int]$Subtype] ([Text.Encoding]::UTF8.GetString($Payload))
+        }
+        if ($Subtype -eq 1) {
+            if ($Payload.Length -ne 3) { Throw-PacketError 'LLDP' 0 'Invalid MED Capabilities length.' }
+            Add-PacketProperty $Properties 'MediaCapabilities' ([pscustomobject]@{
+                Supported = [uint16](Read-NetworkInteger $Payload 0 2 'LLDP')
+                DeviceClass = [byte]$Payload[2]
+            })
+        }
+    }
+    if ($Oui -eq $Dot3Oui) {
+        switch ($Subtype) {
+            1 {
+                if ($Payload.Length -ne 5) { Throw-PacketError 'LLDP' 0 'Invalid MAC/PHY Configuration length.' }
+                Add-PacketProperty $Properties 'MacPhy' ([pscustomobject]@{
+                    AutoNegotiationSupported = [bool](($Payload[0] -band 1) -ne 0)
+                    AutoNegotiationEnabled = [bool](($Payload[0] -band 2) -ne 0)
+                    AutoNegotiationAdvertised = [uint16](Read-NetworkInteger $Payload 1 2 'LLDP')
+                    OperationalMauType = [uint16](Read-NetworkInteger $Payload 3 2 'LLDP')
+                })
+            }
+            4 {
+                if ($Payload.Length -ne 2) { Throw-PacketError 'LLDP' 0 'Invalid Maximum Frame Size length.' }
+                Add-PacketProperty $Properties 'MaximumFrameSize' ([uint16](Read-NetworkInteger $Payload 0 2 'LLDP'))
+            }
+        }
+    }
     if ($Oui -eq $IeeeOui) {
         switch ($Subtype) {
-            1 { Add-PacketProperty $Properties 'VLAN' ([uint16](Read-NetworkInteger $Payload 0 2 'LLDP')) }
+            1 {
+                if ($Payload.Length -ne 2) { Throw-PacketError 'LLDP' 0 'Invalid Port VLAN ID length.' }
+                Add-PacketProperty $Properties 'VLAN' ([uint16](Read-NetworkInteger $Payload 0 2 'LLDP'))
+            }
             9 { Add-DcbxProperty $Properties 'IEEE' 'ETS' (Convert-DcbxValue $Payload 'IEEE' 'ETS') }
             11 { Add-DcbxProperty $Properties 'IEEE' 'PFC' (Convert-DcbxValue $Payload 'IEEE' 'PFC') }
         }

@@ -42,9 +42,40 @@ PSDiscoveryProtocol does not return all information available in CDP and LLDP pa
 Install-Module -Name PSDiscoveryProtocol
 ```
 
+### LLDP inventory extensions
+
+The LLDP parser also exposes the fields advertised by EdgeSwitch and other LLDP-MED devices. Existing properties remain available.
+
+| LLDP field | Parsed property |
+| --- | --- |
+| Chassis/port identifier subtype | `ChassisIdSubtype`, `PortSubtype` |
+| System Name | `SystemName`, also available as `Device` |
+| System Description | `SystemDescription` |
+| MED Hardware/Firmware/Software Revision | `HardwareRevision`, `FirmwareRevision`, `SoftwareVersion` |
+| MED Serial Number / Manufacturer / Model / Asset ID | `SerialNumber`, `Manufacturer`, `Model`, `AssetId` |
+| MED Capabilities | `MediaCapabilities.Supported` (uint16 mask), `MediaCapabilities.DeviceClass` (byte) |
+| IEEE 802.3 MAC/PHY Configuration/Status | `MacPhy.AutoNegotiationSupported`, `AutoNegotiationEnabled`, `AutoNegotiationAdvertised` (uint16 mask), `OperationalMauType` (uint16 code) |
+| IEEE 802.3 Maximum Frame Size | `MaximumFrameSize` (uint16, bytes) |
+| IEEE 802.1 Port VLAN ID | `VLAN` |
+
+Port ID, port description, TTL and system capabilities remain `Port`, `PortDescription`, `TimeToLive` and `Capabilities`. Inventory strings are read directly from MED TLVs; model and software version are not guessed from the free-form system description. MAC/PHY codes are preserved without guessing duplex. TLV identifiers and layouts follow the [lldpd implementation](https://github.com/lldpd/lldpd/blob/master/src/daemon/protocols/lldp.c) and its [TLV definitions](https://github.com/lldpd/lldpd/blob/master/src/daemon/lldp-tlv.h).
+
+```PowerShell
+Invoke-DiscoveryProtocolCapture -SwitchOnly -Type LLDP |
+    Get-DiscoveryProtocolData | Format-List *
+```
+
 ### Active Directory inventory
 
-The standalone `Invoke-ComputerInventory.ps1` script updates the computer object's Active Directory inventory attributes. Run it elevated under an account with the required AD write permissions, with the complete `PSDiscoveryProtocol` folder beside the script. It captures both protocols with `-SwitchOnly`, limits results to the selected primary adapter, prefers LLDP and ignores CDP neighbors when LLDP is present. CDP is used only when LLDP is absent and identifies exactly one neighbor. Multiple LLDP neighbors or, without LLDP, multiple CDP neighbors leave existing switch attributes unchanged. This avoids forwarded CDP announcements overriding the local LLDP neighbor. Once a neighbor is selected, missing, empty or unsupported values explicitly clear the corresponding managed switch LDAP attributes (1-11). Discovery failure or ambiguous neighbors still leave the switch inventory unchanged. Switch address lists are stored separated by `; `, and attribute 8 stores the numeric capability mask of the selected protocol. The source protocol is logged. Review these attribute mappings before deploying the scheduled task.
+| Application field | LDAP attribute | Stored value |
+| --- | --- | --- |
+| `SwitchName` | `msDS-cloudExtensionAttribute1` | `SystemName`, falling back to `Device`. CDP exposes Device ID as SystemName. |
+| `SwitchDevice` | `msDS-cloudExtensionAttribute6` | Original `Device`: CDP Device ID or LLDP System Name. It can equal SwitchName; it is not a model or manufacturer field. |
+| `SwitchCapabilities` | `msDS-cloudExtensionAttribute8` | Readable roles such as `Switch, Router`. Uses enabled LLDP capabilities (supported when enabled is unavailable) or CDP supported capabilities. |
+
+Raw capability masks remain unchanged in parser output. Unknown bits are preserved as `Unknown(0xXXXXXXXX)`; an explicitly zero mask is `None`, whereas missing capabilities clear the LDAP field. LLDP Bridge is displayed as `Switch` to match CDP terminology. Subsequent successful inventory runs replace the previously stored numeric mask with these readable roles. Existing consumers expecting a numeric LDAP value must be adjusted. The capability definitions follow [lldpd constants](https://github.com/lldpd/lldpd/blob/master/src/lldp-const.h); the conversion belongs to inventory presentation rather than the binary parsers.
+
+The standalone `Invoke-ComputerInventory.ps1` script updates the computer object's Active Directory inventory attributes. Run it elevated under an account with the required AD write permissions, with the complete `PSDiscoveryProtocol` folder beside the script. It captures both protocols with `-SwitchOnly`, limits results to the selected primary adapter, prefers LLDP and ignores CDP neighbors when LLDP is present. CDP is used only when LLDP is absent and identifies exactly one neighbor. Multiple LLDP neighbors or, without LLDP, multiple CDP neighbors leave existing switch attributes unchanged. This avoids forwarded CDP announcements overriding the local LLDP neighbor. Once a neighbor is selected, missing, empty or unsupported values explicitly clear the corresponding managed switch LDAP attributes (1-11). Discovery failure or ambiguous neighbors still leave the switch inventory unchanged. Switch address lists are stored separated by `; `, and attribute 8 stores the readable capability roles described above. The source protocol is logged. Review these attribute mappings before deploying the scheduled task.
 
 ### SCCM Hardware Inventory
 PSDiscoveryProtocol can add port information to SCCM Hardware Inventory on your Windows 10 clients.

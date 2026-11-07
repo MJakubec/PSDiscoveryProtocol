@@ -1,5 +1,10 @@
 # Unreleased
 
+- Populate CDP SystemName from its Device ID so SwitchName is available for both protocols. Preserve SwitchDevice as the original advertised Device identifier, which can duplicate the name for LLDP.
+- Store readable role names in inventory SwitchCapabilities (LDAP attribute 8) instead of a numeric mask. Use enabled LLDP capabilities and supported CDP capabilities, normalize LLDP Bridge to Switch, and retain unknown bits as hexadecimal text. Raw parser masks are unchanged. Existing LDAP consumers expecting numbers must migrate.
+
+- Decode LLDP-MED hardware/firmware/software revisions, serial number, manufacturer, model, asset ID and MED capabilities. Expose identifier subtypes, IEEE 802.3 MAC/PHY configuration and maximum frame size, and validate fixed TLV lengths. Add SystemName alongside Device so inventory attributes 1, 5 and 7 receive the advertised LLDP name, MED model and MED software revision. Other new fields are exposed by the parser without assigning new LDAP attributes.
+
 - Add optional `Invoke-DiscoveryProtocolCapture -SwitchOnly` filtering by advertised CDP Switch or enabled LLDP Bridge capabilities. Omit `-Type` to capture both protocols; return the first matching announcement per interface, protocol and source MAC address. The default selection without the switch remains unchanged.
 - Parse CDP Capabilities and LLDP System Capabilities into `Capabilities.Supported`, `Enabled` (null for CDP) and `IsSwitch`. Reject incorrect lengths and LLDP enabled bits absent from the supported mask; preserve the first duplicate value. Frames without Capabilities are excluded by `SwitchOnly`, and malformed candidates are skipped with verbose diagnostics.
 - Add an opt-in live `SwitchOnly` integration test. Capability filtering reflects advertised roles and does not verify physical topology or access-switch identity.

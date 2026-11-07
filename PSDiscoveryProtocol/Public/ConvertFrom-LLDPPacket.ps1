@@ -11,6 +11,9 @@
     Parse LLDP packet to get port, description, device, model, ipaddress, vlan and capabilities.
     Capabilities contains Supported (uint32), Enabled (uint32) and IsSwitch (bool).
     IsSwitch requires the Bridge capability to be enabled.
+    Also decodes LLDP-MED inventory and capabilities, IEEE 802.3 MAC/PHY configuration
+    and maximum frame size. SystemName aliases Device; SoftwareVersion is the MED
+    Software Revision, not a version inferred from SystemDescription.
 
 .PARAMETER Packet
 
@@ -65,8 +68,16 @@
             if ($TextTypes.ContainsKey($TlvType)) { Add-PacketProperty $Properties $TextTypes[$TlvType] ([Text.Encoding]::ASCII.GetString($Value)) }
             else {
                 switch ($TlvType) {
-                    1 { $Id = Convert-LldpIdentifier $Value; if ($null -ne $Id) { Add-PacketProperty $Properties 'ChassisId' $Id } }
-                    2 { $Id = Convert-LldpIdentifier $Value -Port; if ($null -ne $Id) { Add-PacketProperty $Properties 'Port' $Id } }
+                    1 {
+                        $Id = Convert-LldpIdentifier $Value
+                        Add-PacketProperty $Properties 'ChassisIdSubtype' ([byte]$Value[0])
+                        if ($null -ne $Id) { Add-PacketProperty $Properties 'ChassisId' $Id }
+                    }
+                    2 {
+                        $Id = Convert-LldpIdentifier $Value -Port
+                        Add-PacketProperty $Properties 'PortSubtype' ([byte]$Value[0])
+                        if ($null -ne $Id) { Add-PacketProperty $Properties 'Port' $Id }
+                    }
                     3 {
                         if ($TlvLength -ne 2) { Throw-PacketError $Protocol 0 'Invalid TTL length.' }
                         Add-PacketProperty $Properties 'TimeToLive' ([uint16](Read-NetworkInteger $Value 0 2 $Protocol))
@@ -106,5 +117,6 @@
         $Offset = $ValueOffset + $TlvLength
     }
     if (-not $Terminated) { Throw-PacketError $Protocol $Offset 'Missing EndOfLLDPDU.' }
+    if ($Properties.ContainsKey('Device')) { $Properties.SystemName = $Properties.Device }
     [pscustomobject]$Properties
 }

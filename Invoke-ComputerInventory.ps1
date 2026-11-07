@@ -71,6 +71,44 @@ function Select-InventorySwitch
     if ($Cdp.Count -eq 1) { return $Cdp[0] }
 }
 
+function ConvertTo-InventoryCapabilities
+{
+    [CmdletBinding()]
+    param([string]$Type, $Capabilities)
+
+    if ($null -eq $Capabilities.Supported) { return }
+    $Mask = [uint32]$Capabilities.Supported
+    if ($Type -eq 'LLDP')
+    {
+        if ($null -ne $Capabilities.Enabled) { $Mask = [uint32]$Capabilities.Enabled }
+        $Roles = [ordered]@{
+            Switch = 4; Router = 16; Host = 128; Repeater = 2; WirelessAccessPoint = 8
+            Telephone = 32; DocsisCableDevice = 64; CVlanBridge = 256; SVlanBridge = 512
+            TwoPortMacRelay = 1024; Other = 1
+        }
+    }
+    elseif ($Type -eq 'CDP')
+    {
+        $Roles = [ordered]@{
+            Switch = 8; Router = 1; Host = 16; Bridge = 2; SourceRouteBridge = 4
+            Repeater = 64; IgmpFiltering = 32
+        }
+    }
+    else { return }
+
+    $Names = @()
+    [uint32]$KnownMask = 0
+    foreach ($Role in $Roles.Keys)
+    {
+        $KnownMask = $KnownMask -bor [uint32]$Roles[$Role]
+        if (($Mask -band [uint32]$Roles[$Role]) -ne 0) { $Names += $Role }
+    }
+    $UnknownMask = $Mask -band ([uint32]::MaxValue -bxor $KnownMask)
+    if ($UnknownMask -ne 0) { $Names += ('Unknown(0x{0:X8})' -f $UnknownMask) }
+    if ($Names.Count -eq 0) { return 'None' }
+    return $Names -join ', '
+}
+
 function Get-InventorySwitchAttributes
 {
     [CmdletBinding()]
@@ -98,17 +136,22 @@ function Get-InventorySwitchAttributes
             $Attributes[$Name] = [string]$Value
         }
     }
+    # CDP Device ID is also its inventory name; support older parser output as well.
+    if ($null -eq $Attributes['msDS-cloudExtensionAttribute1'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$Item.Device))
+    {
+        $Attributes['msDS-cloudExtensionAttribute1'] = [string]$Item.Device
+    }
     $Addresses = @($Item.IPAddress | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     if ($Addresses.Count -gt 0)
     {
         $Attributes['msDS-cloudExtensionAttribute4'] = $Addresses -join '; '
     }
-    if ($null -ne $Item.Capabilities.Supported)
-    {
-        # Preserve numeric storage; bit definitions depend on the source protocol logged above.
-        $Attributes['msDS-cloudExtensionAttribute8'] = [string]$Item.Capabilities.Supported
-    }
-    # Unsupported fields remain null and clear stale values, without inventing replacements.
+    $Attributes['msDS-cloudExtensionAttribute8'] = ConvertTo-InventoryCapabilities -Type $Item.Type -Capabilities $Item.Capabilities
+    # LLDP SystemName, MED SoftwareVersion and Model use the existing mappings above.
+    # HardwareRevision, FirmwareRevision, SerialNumber, Manufacturer, MacPhy, MED
+    # capabilities and frame size are exposed by the parser but have no dedicated LDAP mapping.
+    # Missing fields remain null and clear stale values, without inventing replacements.
     return $Attributes
 }
 

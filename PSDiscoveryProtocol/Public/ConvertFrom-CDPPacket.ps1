@@ -10,6 +10,7 @@
 
     Parse CDP packet to get port, device, model, ipaddress, vlan and capabilities.
     Capabilities contains Supported (uint32), Enabled (null for CDP) and IsSwitch (bool).
+    SystemName exposes the same advertised Device ID as Device for inventory consumers.
 
     This function is used by Get-DiscoveryProtocolData to parse the
     Fragment property of a DiscoveryProtocolPacket object.
@@ -81,5 +82,6 @@
         } catch [System.IO.InvalidDataException] { Throw-PacketError $Protocol $Offset $_.Exception.Message }
         $Offset += $TlvLength
     }
+    if ($Properties.ContainsKey('Device')) { $Properties.SystemName = $Properties.Device }
     [pscustomobject]$Properties
 }
