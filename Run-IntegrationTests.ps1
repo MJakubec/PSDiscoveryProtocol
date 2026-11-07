@@ -6,7 +6,7 @@
 Runs live CDP and LLDP integration tests.
 .DESCRIPTION
 Requires Pester 3.4 or 4.x and a wired network advertising both protocols.
-Captures CDP for 62 seconds and LLDP for 32 seconds. Restores the original
+Captures CDP for 62 seconds, LLDP for 32 seconds and SwitchOnly for 62 seconds. Restores the original
 PSDISCOVERY_LIVE_CAPTURE environment variable even if the tests fail.
 .EXAMPLE
     .\Run-IntegrationTests.ps1

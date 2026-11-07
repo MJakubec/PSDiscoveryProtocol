@@ -1,6 +1,17 @@
 Import-Module "$PSScriptRoot/../PSDiscoveryProtocol/PSDiscoveryProtocol.psd1" -Force
 
 InModuleScope PSDiscoveryProtocol {
+    . "$PSScriptRoot/Fixtures.ps1"
+    function New-CaptureTestEvent {
+        param([byte[]]$Bytes, [int]$Source = 102, [int]$InterfaceIndex = 1)
+        $Bytes = $Bytes.Clone()
+        $Bytes[11] = $Source
+        [pscustomobject]@{
+            MachineName = 'server'; TimeCreated = [datetime]'2026-01-01'
+            FragmentSize = $Bytes.Length; Fragment = $Bytes; MiniportIfIndex = $InterfaceIndex
+            Connection = "Ethernet$InterfaceIndex"; Interface = 'Adapter'
+        }
+    }
     Describe 'Capture resource ownership' {
         BeforeEach {
             $script:FailAt = ''
@@ -195,6 +206,87 @@ InModuleScope PSDiscoveryProtocol {
             { Invoke-DiscoveryProtocolCapture -ComputerName server -Duration 0 } | Should Throw
             { Invoke-DiscoveryProtocolCapture -ComputerName server -Duration -1 } | Should Throw
             Assert-MockCalled -Scope It New-CimSession -Times 0 -Exactly
+        }
+        It 'filters before selecting packets and keeps both protocols per switch and interface' {
+            $HostFrame = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,128,0,128)))
+            $SwitchFrame = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4,0,4)))
+            $CdpFrame = New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0,9)))
+            $script:CapturedEvents = @(
+                (New-CaptureTestEvent $HostFrame)
+                (New-CaptureTestEvent $SwitchFrame)
+                (New-CaptureTestEvent $SwitchFrame)
+                (New-CaptureTestEvent $CdpFrame)
+                (New-CaptureTestEvent $CdpFrame)
+                (New-CaptureTestEvent $SwitchFrame -Source 103)
+                (New-CaptureTestEvent $SwitchFrame -InterfaceIndex 2)
+                (New-CaptureTestEvent $SwitchFrame -Source 85)
+            )
+            $Packets = @(Invoke-DiscoveryProtocolCapture -ComputerName server -SwitchOnly)
+            $Packets.Count | Should Be 4
+            @($Packets | Where-Object { $_.DiscoveryProtocolType -eq 'CDP' }).Count | Should Be 1
+            @($Packets | Where-Object { $_.SourceAddress -eq '001122334455' }).Count | Should Be 0
+            @($Packets | Where-Object { $_.MiniportIfIndex -eq 2 }).Count | Should Be 1
+            foreach ($Packet in $Packets) {
+                $Packet.GetType().Name | Should Be 'DiscoveryProtocolPacket'
+                ($Packet | Get-DiscoveryProtocolData).Capabilities.IsSwitch | Should Be $true
+            }
+            Assert-MockCalled -Scope It Add-NetEventPacketCaptureProvider -Times 1 -ParameterFilter { $LinkLayerAddress.Count -eq 4 }
+        }
+        It 'keeps the first matching announcement in each switch group' {
+            $First = New-LldpFrame ((New-LldpTlv 5 ([byte[]]@(65))) + (New-LldpTlv 7 ([byte[]]@(0,4,0,4))))
+            $Second = New-LldpFrame ((New-LldpTlv 5 ([byte[]]@(66))) + (New-LldpTlv 7 ([byte[]]@(0,4,0,4))))
+            $script:CapturedEvents = @((New-CaptureTestEvent $First), (New-CaptureTestEvent $Second))
+            $Packets = @(Invoke-DiscoveryProtocolCapture -ComputerName server -SwitchOnly)
+            $Packets.Count | Should Be 1
+            ($Packets | Get-DiscoveryProtocolData).Device | Should Be 'A'
+        }
+        It 'skips malformed candidates and candidates without capabilities' {
+            $Invalid = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4)))
+            $Valid = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4,0,4)))
+            $script:CapturedEvents = @(
+                (New-CaptureTestEvent $Invalid)
+                (New-CaptureTestEvent (New-LldpFrame))
+                (New-CaptureTestEvent (New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0)))))
+                (New-CaptureTestEvent $Valid)
+            )
+            $Output = @(Invoke-DiscoveryProtocolCapture -ComputerName server -SwitchOnly -Verbose -ErrorAction Stop 4>&1)
+            @($Output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match 'Skipping malformed' }).Count | Should Be 2
+            @($Output | Where-Object { $_ -is [DiscoveryProtocolPacket] }).Count | Should Be 1
+        }
+        It 'respects Type and capture aliases in SwitchOnly mode' {
+            $Lldp = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4,0,4)))
+            $Cdp = New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0,8)))
+            $script:CapturedEvents = @((New-CaptureTestEvent $Lldp), (New-CaptureTestEvent $Cdp))
+            foreach ($Type in 'CDP','LLDP') {
+                $Packets = @(Invoke-DiscoveryProtocolCapture -ComputerName server -SwitchOnly -Type $Type)
+                $Packets.Count | Should Be 1
+                $Packets[0].DiscoveryProtocolType | Should Be $Type
+            }
+            $Packets = @(Capture-LLDPPacket -ComputerName server -SwitchOnly -WarningAction SilentlyContinue)
+            $Packets.Count | Should Be 1
+            $Packets[0].DiscoveryProtocolType | Should Be 'LLDP'
+        }
+        It 'warns when no announcement matches SwitchOnly' {
+            $script:CapturedEvents = @(
+                (New-CaptureTestEvent (New-LldpFrame))
+                (New-CaptureTestEvent (New-CdpFrame))
+                (New-CaptureTestEvent (New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4,0,0)))))
+                (New-CaptureTestEvent (New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,16,0,16)))))
+                (New-CaptureTestEvent (New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0,0)))))
+                (New-CaptureTestEvent (New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0,1)))))
+            )
+            $Packets = @(Invoke-DiscoveryProtocolCapture -ComputerName server -SwitchOnly -WarningAction SilentlyContinue -WarningVariable Warnings)
+            $Packets.Count | Should Be 0
+            ($Warnings -join ' ') | Should Match 'matching SwitchOnly'
+        }
+        It 'preserves the original unfiltered selection without SwitchOnly' {
+            $HostFrame = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,128,0,128)))
+            $SwitchFrame = New-LldpFrame (New-LldpTlv 7 ([byte[]]@(0,4,0,4)))
+            $CdpFrame = New-CdpFrame (New-CdpTlv 4 ([byte[]]@(0,0,0,8)))
+            $script:CapturedEvents = @((New-CaptureTestEvent $HostFrame), (New-CaptureTestEvent $SwitchFrame), (New-CaptureTestEvent $CdpFrame))
+            $Packets = @(Invoke-DiscoveryProtocolCapture -ComputerName server)
+            $Packets.Count | Should Be 1
+            ($Packets | Get-DiscoveryProtocolData).Capabilities.IsSwitch | Should Be $false
         }
     }
 }

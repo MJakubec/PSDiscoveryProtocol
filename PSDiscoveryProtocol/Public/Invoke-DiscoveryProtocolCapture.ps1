@@ -10,6 +10,7 @@
 
     Capture discovery protocol packets on local or remote computers. This function will start a packet capture and save the
     captured packets in a temporary ETL file. The first matching discovery protocol packet on each interface will be returned.
+    With SwitchOnly, the first matching frame per interface, protocol and source MAC address is returned instead.
 
     Cisco devices will by default send CDP announcements every 60 seconds. Default interval for LLDP packets is 30 seconds.
 
@@ -31,13 +32,21 @@
 .PARAMETER Type
 
     Specifies what type of packet to capture, CDP or LLDP. If omitted, both types will be captured,
-    but only the first matching packet on each interface will be returned.
+    but only the first matching packet on each interface will be returned unless SwitchOnly is specified.
 
     If Type is LLDP, Duration defaults to 32. If Type is CDP or omitted, Duration defaults to 62.
 
 .PARAMETER NoCleanup
 
     If specified, the ETL file will not be deleted from %TEMP%.
+
+.PARAMETER SwitchOnly
+
+    Return only neighbors advertising CDP Switch or enabled LLDP Bridge capabilities.
+    Frames without Capabilities are excluded. Malformed candidates are skipped with verbose diagnostics.
+    Returns the first matching frame per interface, protocol and source MAC address.
+    Omit Type to capture both protocols. Capabilities describe the advertised role; they do not
+    prove physical topology or the identity of the access switch. Software bridges can also match.
 
 .PARAMETER Force
 
@@ -50,6 +59,13 @@
 .OUTPUTS
 
     DiscoveryProtocolPacket
+
+.EXAMPLE
+
+    PS C:\> Invoke-DiscoveryProtocolCapture -SwitchOnly | Get-DiscoveryProtocolData
+
+    Capture both CDP and LLDP announcements and return neighbors advertising switching.
+    Repeated announcements are removed separately for each interface, protocol and source MAC address.
 
 .EXAMPLE
 
@@ -133,7 +149,10 @@
         [switch]$NoCleanup,
 
         [Parameter()]
-        [switch]$Force
+        [switch]$Force,
+
+        [Parameter()]
+        [switch]$SwitchOnly
     )
 
     begin {
@@ -286,17 +305,40 @@
                         } finally { $PropertySelector.Dispose() }
                     } -ArgumentList $ETLFilePath
 
-                    $FoundPackets = $Events -as [DiscoveryProtocolPacket[]] | Where-Object {
+                    $Candidates = $Events -as [DiscoveryProtocolPacket[]] | Where-Object {
                         $_.IsDiscoveryProtocolPacket -and $_.SourceAddress -notin $MACAddresses
-                    } | Group-Object MiniportIfIndex | ForEach-Object {
-                        $_.Group | Select-Object -First 1
+                    }
+                    if ($SwitchOnly) {
+                        $MatchingPackets = foreach ($Candidate in $Candidates) {
+                            if ($Type -and $Candidate.DiscoveryProtocolType -ne $Type) { continue }
+                            try {
+                                $Data = switch ($Candidate.DiscoveryProtocolType) {
+                                    'CDP' { ConvertFrom-CDPPacket -Packet $Candidate.Fragment }
+                                    'LLDP' { ConvertFrom-LLDPPacket -Packet $Candidate.Fragment }
+                                }
+                                if ($Data.Capabilities.IsSwitch) { $Candidate }
+                            } catch [System.IO.InvalidDataException] {
+                                Write-Verbose "Skipping malformed $($Candidate.DiscoveryProtocolType) frame from $($Candidate.SourceAddress) on interface $($Candidate.MiniportIfIndex): $($_.Exception.Message)"
+                            }
+                        }
+                        $FoundPackets = $MatchingPackets | Group-Object MiniportIfIndex, DiscoveryProtocolType, SourceAddress | ForEach-Object {
+                            $_.Group | Select-Object -First 1
+                        }
+                    } else {
+                        $FoundPackets = $Candidates | Group-Object MiniportIfIndex | ForEach-Object {
+                            $_.Group | Select-Object -First 1
+                        }
                     }
 
                     if ($FoundPackets) {
                         $FoundPackets
                     }
                     else {
-                        Write-Warning "No discovery protocol packets captured on $Computer in $Seconds seconds."
+                        if ($SwitchOnly) {
+                            Write-Warning "No discovery protocol packets matching SwitchOnly captured on $Computer in $Seconds seconds."
+                        } else {
+                            Write-Warning "No discovery protocol packets captured on $Computer in $Seconds seconds."
+                        }
                         continue
                     }
                 }

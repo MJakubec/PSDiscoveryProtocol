@@ -8,7 +8,9 @@
 
 .DESCRIPTION
 
-    Parse LLDP packet to get port, description, device, model, ipaddress and vlan.
+    Parse LLDP packet to get port, description, device, model, ipaddress, vlan and capabilities.
+    Capabilities contains Supported (uint32), Enabled (uint32) and IsSwitch (bool).
+    IsSwitch requires the Bridge capability to be enabled.
 
 .PARAMETER Packet
 
@@ -68,6 +70,20 @@
                     3 {
                         if ($TlvLength -ne 2) { Throw-PacketError $Protocol 0 'Invalid TTL length.' }
                         Add-PacketProperty $Properties 'TimeToLive' ([uint16](Read-NetworkInteger $Value 0 2 $Protocol))
+                    }
+                    7 {
+                        if ($TlvLength -ne 4) { Throw-PacketError $Protocol 0 'Invalid System Capabilities length.' }
+                        $Supported = [uint32](Read-NetworkInteger $Value 0 2 $Protocol)
+                        $Enabled = [uint32](Read-NetworkInteger $Value 2 2 $Protocol)
+                        if (($Enabled -band $Supported) -ne $Enabled) {
+                            Throw-PacketError $Protocol 0 'Enabled capabilities include unsupported bits.'
+                        }
+                        $BridgeMask = 0x0004
+                        Add-PacketProperty $Properties 'Capabilities' ([pscustomobject]@{
+                            Supported = $Supported
+                            Enabled = $Enabled
+                            IsSwitch = [bool](($Enabled -band $BridgeMask) -ne 0)
+                        })
                     }
                     8 {
                         $AddressLength = Read-NetworkInteger $Value 0 1 $Protocol

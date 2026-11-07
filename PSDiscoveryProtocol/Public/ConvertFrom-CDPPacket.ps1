@@ -8,7 +8,8 @@
 
 .DESCRIPTION
 
-    Parse CDP packet to get port, device, model, ipaddress and vlan.
+    Parse CDP packet to get port, device, model, ipaddress, vlan and capabilities.
+    Capabilities contains Supported (uint32), Enabled (null for CDP) and IsSwitch (bool).
 
     This function is used by Get-DiscoveryProtocolData to parse the
     Fragment property of a DiscoveryProtocolPacket object.
@@ -64,6 +65,15 @@
             elseif ($TlvType -in 2,22) {
                 $Name = if ($TlvType -eq 2) { 'IPAddress' } else { 'Management' }
                 Convert-CdpAddresses $Value $Properties $Name
+            } elseif ($TlvType -eq 4) {
+                if ($Value.Length -ne 4) { Throw-PacketError $Protocol 0 'Invalid Capabilities length.' }
+                $Supported = [uint32](Read-NetworkInteger $Value 0 4 $Protocol)
+                $SwitchMask = 0x00000008
+                Add-PacketProperty $Properties 'Capabilities' ([pscustomobject]@{
+                    Supported = $Supported
+                    Enabled = $null
+                    IsSwitch = [bool](($Supported -band $SwitchMask) -ne 0)
+                })
             } elseif ($TlvType -eq 10) {
                 if ($Value.Length -ne 2) { Throw-PacketError $Protocol 0 'Invalid VLAN length.' }
                 Add-PacketProperty $Properties 'VLAN' ([uint16](Read-NetworkInteger $Value 0 2 $Protocol))
