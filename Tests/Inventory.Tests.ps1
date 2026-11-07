@@ -2,34 +2,45 @@
 $Tokens = $null
 $ParseErrors = $null
 $Ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    (Join-Path $PSScriptRoot '../Inventory.ps1'), [ref]$Tokens, [ref]$ParseErrors)
-if ($ParseErrors.Count) { throw 'Inventory.ps1 has syntax errors.' }
+    (Join-Path $PSScriptRoot '../Invoke-ComputerInventory.ps1'), [ref]$Tokens, [ref]$ParseErrors)
+if ($ParseErrors.Count) { throw 'Invoke-ComputerInventory.ps1 has syntax errors.' }
 foreach ($Name in 'Select-InventorySwitch', 'Get-InventorySwitchAttributes') {
     $Definition = $Ast.Find({ param($Node) $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq $Name }, $true)
     . ([scriptblock]::Create($Definition.Extent.Text))
 }
 
 Describe 'Inventory switch selection' {
-    It 'prefers CDP for the same advertised device name' {
+    It 'prefers LLDP for the same advertised device name' {
         $Cdp = [pscustomobject]@{ Type = 'CDP'; Device = 'switch.example.'; SourceAddress = '001122334455' }
         $Lldp = [pscustomobject]@{ Type = 'LLDP'; Device = 'SWITCH.EXAMPLE'; SourceAddress = '001122334466' }
-        (Select-InventorySwitch @($Lldp,$Cdp)).Type | Should Be 'CDP'
+        (Select-InventorySwitch @($Lldp,$Cdp)).Type | Should Be 'LLDP'
     }
-    It 'matches source addresses even when advertised names differ' {
+    It 'prefers LLDP when advertised names differ' {
         $Cdp = [pscustomobject]@{ Type = 'CDP'; Device = 'switch'; SourceAddress = '001122334455' }
         $Lldp = [pscustomobject]@{ Type = 'LLDP'; Device = 'switch.example'; SourceAddress = '001122334455' }
-        (Select-InventorySwitch @($Lldp,$Cdp)).Type | Should Be 'CDP'
+        (Select-InventorySwitch @($Lldp,$Cdp)).Type | Should Be 'LLDP'
     }
     It 'uses LLDP without CDP and returns nothing without announcements' {
         $Lldp = [pscustomobject]@{ Type = 'LLDP'; Device = 'switch'; SourceAddress = '001122334455' }
         (Select-InventorySwitch @($Lldp)).Type | Should Be 'LLDP'
         ($null -eq (Select-InventorySwitch @())) | Should Be $true
     }
-    It 'rejects conflicting and multiple neighbors' {
+    It 'uses LLDP even with conflicting or multiple CDP neighbors' {
         $Cdp = [pscustomobject]@{ Type = 'CDP'; Device = 'switch1'; SourceAddress = '001122334455' }
         $Lldp = [pscustomobject]@{ Type = 'LLDP'; Device = 'switch2'; SourceAddress = '001122334466' }
-        ($null -eq (Select-InventorySwitch @($Cdp,$Lldp) -WarningAction SilentlyContinue)) | Should Be $true
+        (Select-InventorySwitch @($Cdp,$Lldp)).Type | Should Be 'LLDP'
+        (Select-InventorySwitch @($Cdp,$Cdp,$Lldp)).Type | Should Be 'LLDP'
+    }
+    It 'uses CDP only when LLDP is absent and unambiguous' {
+        $Cdp = [pscustomobject]@{ Type = 'CDP'; Device = 'switch'; SourceAddress = '001122334455' }
+        (Select-InventorySwitch @($Cdp)).Type | Should Be 'CDP'
         ($null -eq (Select-InventorySwitch @($Cdp,$Cdp) -WarningAction SilentlyContinue)) | Should Be $true
+    }
+    It 'does not fall back to CDP when LLDP is ambiguous' {
+        $Cdp = [pscustomobject]@{ Type = 'CDP'; Device = 'switch'; SourceAddress = '001122334455' }
+        $Lldp = [pscustomobject]@{ Type = 'LLDP'; Device = 'other'; SourceAddress = '001122334466' }
+        ($null -eq (Select-InventorySwitch @($Lldp,$Lldp,$Cdp) -WarningAction SilentlyContinue)) | Should Be $true
+        ($null -eq (Select-InventorySwitch @($Lldp,$Lldp) -WarningAction SilentlyContinue)) | Should Be $true
     }
 }
 

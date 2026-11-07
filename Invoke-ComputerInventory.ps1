@@ -40,7 +40,7 @@ function Set-AttributeValue
     }
 }
 
-# Return one announcement only when CDP/LLDP do not identify conflicting neighbors.
+# Prefer LLDP: forwarded CDP announcements may identify switches on other ports.
 function Select-InventorySwitch
 {
     [CmdletBinding()]
@@ -48,25 +48,19 @@ function Select-InventorySwitch
 
     $Cdp = @($Announcements | Where-Object { $_.Type -eq 'CDP' })
     $Lldp = @($Announcements | Where-Object { $_.Type -eq 'LLDP' })
-    if ($Cdp.Count -gt 1 -or $Lldp.Count -gt 1)
+    if ($Lldp.Count -eq 1) { return $Lldp[0] }
+    if ($Lldp.Count -gt 1)
     {
-        Write-Warning 'Multiple switch neighbors were found on the primary adapter. Inventory is unchanged.'
+        Write-Warning 'Multiple LLDP switch neighbors were found on the primary adapter. Inventory is unchanged.'
         return
     }
-    if ($Cdp.Count -eq 1 -and $Lldp.Count -eq 1)
+    # Use CDP only when LLDP is absent, and only for one unambiguous neighbor.
+    if ($Cdp.Count -gt 1)
     {
-        $SameAddress = -not [string]::IsNullOrWhiteSpace($Cdp[0].SourceAddress) -and $Cdp[0].SourceAddress -eq $Lldp[0].SourceAddress
-        $SameName = -not [string]::IsNullOrWhiteSpace($Cdp[0].Device) -and
-            -not [string]::IsNullOrWhiteSpace($Lldp[0].Device) -and
-            $Cdp[0].Device.Trim().TrimEnd('.') -eq $Lldp[0].Device.Trim().TrimEnd('.')
-        if (-not ($SameAddress -or $SameName))
-        {
-            Write-Warning 'CDP and LLDP identify different neighbors. Inventory is unchanged.'
-            return
-        }
+        Write-Warning 'Multiple CDP switch neighbors were found without LLDP. Inventory is unchanged.'
+        return
     }
     if ($Cdp.Count -eq 1) { return $Cdp[0] }
-    if ($Lldp.Count -eq 1) { return $Lldp[0] }
 }
 
 function Get-InventorySwitchAttributes
