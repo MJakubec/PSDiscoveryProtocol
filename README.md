@@ -13,7 +13,7 @@ The root module defines `DiscoveryProtocolPacket` and explicitly loads commands 
 
 Run `Invoke-Pester ./Tests` from the repository root with Pester 3.4 or 4.x in each PowerShell edition. Unit tests construct Ethernet frames and mock capture operations; they do not require elevation or a discovery-enabled network. The live capture tests are skipped by default.
 
-To run the live CDP and LLDP tests, use an elevated PowerShell on a wired network advertising both protocols, set `$env:PSDISCOVERY_LIVE_CAPTURE = '1'`, and run `Invoke-Pester ./Tests/Integration`. The tests use the normal 62/32 second capture durations. Remove the environment variable afterward. See [CHANGELOG.md](CHANGELOG.md) for parsing and error-handling changes.
+To run the live CDP and LLDP tests, use an elevated PowerShell on a wired network advertising both protocols and run `./Run-IntegrationTests.ps1`. The script enables live capture, runs the tests using Pester 3.4 or 4.x, and restores the original environment variable afterward, including on failure. The tests use the normal 62/32 second capture durations. The script reports an error if any test fails. See [CHANGELOG.md](CHANGELOG.md) for parsing and error-handling changes.
 
 ### CDP and LLDP
 PSDiscoveryProtocol does not return all information available in CDP and LLDP packets. If you want to know what information is available use `Export-Pcap` and open the pcap file in Wireshark or another tool with a more complete implementation.
