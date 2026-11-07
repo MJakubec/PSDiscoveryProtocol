@@ -7,7 +7,8 @@ Updates Active Directory hardware, OS, network and switch inventory for this com
 .DESCRIPTION
 Run elevated under an identity allowed to update the computer's inventory attributes.
 Deploy the complete PSDiscoveryProtocol folder beside this script. Discovery captures
-CDP and LLDP for 62 seconds and retains missing or ambiguous switch data in AD.
+CDP and LLDP for 62 seconds. A selected neighbor's missing fields clear their LDAP
+attributes; failed discovery or ambiguous neighbors leave switch inventory unchanged.
 #>
 
 $ComputerName = $env:COMPUTERNAME
@@ -26,13 +27,20 @@ function Set-AttributeValue
         [string]$AttributeValue
     )
 
-    $CurrentValue = if ($AttributeValue -eq "") { $null } else { $AttributeValue }
-    $OriginalValue = $Computer.InvokeGet($AttributeName)
+    $CurrentValue = if ([string]::IsNullOrWhiteSpace($AttributeValue)) { $null } else { $AttributeValue }
+    $OriginalValue = $Computer.Properties[$AttributeName].Value
 
     if ($OriginalValue -ne $CurrentValue)
     {
         Write-Output "Updating attribute ""$AttributeName"" to ""$AttributeValue""..."
-        $Computer.Properties[$AttributeName].Value = $CurrentValue
+        if ($null -eq $CurrentValue)
+        {
+            $Computer.Properties[$AttributeName].Clear()
+        }
+        else
+        {
+            $Computer.Properties[$AttributeName].Value = $CurrentValue
+        }
     }
     else
     {
@@ -69,11 +77,18 @@ function Get-InventorySwitchAttributes
     param([Parameter(Mandatory = $true)]$Item)
 
     $Attributes = [ordered]@{}
+    # Include every managed switch attribute so missing values explicitly clear old data.
+    foreach ($Index in 1..11) { $Attributes["msDS-cloudExtensionAttribute$Index"] = $null }
     $Mapping = [ordered]@{
+        'msDS-cloudExtensionAttribute1' = 'SystemName'
         'msDS-cloudExtensionAttribute2' = 'Port'
         'msDS-cloudExtensionAttribute3' = 'VLAN'
         'msDS-cloudExtensionAttribute5' = 'Model'
         'msDS-cloudExtensionAttribute6' = 'Device'
+        'msDS-cloudExtensionAttribute7' = 'SoftwareVersion'
+        'msDS-cloudExtensionAttribute9' = 'Duplex'
+        'msDS-cloudExtensionAttribute10' = 'UntrustedPortCoS'
+        'msDS-cloudExtensionAttribute11' = 'TrustBitmap'
     }
     foreach ($Name in $Mapping.Keys)
     {
@@ -93,7 +108,7 @@ function Get-InventorySwitchAttributes
         # Preserve numeric storage; bit definitions depend on the source protocol logged above.
         $Attributes['msDS-cloudExtensionAttribute8'] = [string]$Item.Capabilities.Supported
     }
-    # Attributes 1, 7 and 9-11 require fields not exposed by the module; leave them unchanged.
+    # Unsupported fields remain null and clear stale values, without inventing replacements.
     return $Attributes
 }
 
@@ -226,7 +241,7 @@ try
 
 ######################################################################################################################
 
-    # Missing discovery data must not erase previously inventoried switch attributes.
+    # No selected neighbor means no switch updates; missing fields on a selected neighbor are cleared.
     if ($IsDnsClientFound)
     {
         $Item = $null

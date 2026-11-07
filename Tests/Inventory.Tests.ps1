@@ -44,7 +44,7 @@ Describe 'Inventory switch selection' {
     }
 }
 
-Describe 'Inventory attribute preservation' {
+Describe 'Inventory attribute synchronization' {
     It 'maps supported fields and serializes addresses and the numeric mask' {
         $Item = [pscustomobject]@{
             Port = 'Gi1/1'; VLAN = 10; Model = 'Switch'; Device = 'switch.example'
@@ -57,14 +57,23 @@ Describe 'Inventory attribute preservation' {
         $Attributes['msDS-cloudExtensionAttribute5'] | Should Be 'Switch'
         $Attributes['msDS-cloudExtensionAttribute6'] | Should Be 'switch.example'
         $Attributes['msDS-cloudExtensionAttribute8'] | Should Be '8'
-        $Attributes.Count | Should Be 6
+        $Attributes.Count | Should Be 11
     }
-    It 'omits missing optional values and unsupported fields' {
+    It 'explicitly clears missing optional values and unsupported fields' {
         $Attributes = Get-InventorySwitchAttributes ([pscustomobject]@{ Device = 'switch'; Model = ' '; IPAddress = @() })
-        $Attributes.Count | Should Be 1
+        $Attributes.Count | Should Be 11
         $Attributes['msDS-cloudExtensionAttribute6'] | Should Be 'switch'
         foreach ($Index in 1,2,3,4,5,7,8,9,10,11) {
-            $Attributes.Contains("msDS-cloudExtensionAttribute$Index") | Should Be $false
+            $Attributes.Contains("msDS-cloudExtensionAttribute$Index") | Should Be $true
+            ($null -eq $Attributes["msDS-cloudExtensionAttribute$Index"]) | Should Be $true
         }
+    }
+    It 'preserves zero values instead of treating them as missing' {
+        $Attributes = Get-InventorySwitchAttributes ([pscustomobject]@{
+            VLAN = 0; UntrustedPortCoS = 0; Capabilities = [pscustomobject]@{ Supported = [uint32]0 }
+        })
+        $Attributes['msDS-cloudExtensionAttribute3'] | Should Be '0'
+        $Attributes['msDS-cloudExtensionAttribute8'] | Should Be '0'
+        $Attributes['msDS-cloudExtensionAttribute10'] | Should Be '0'
     }
 }
